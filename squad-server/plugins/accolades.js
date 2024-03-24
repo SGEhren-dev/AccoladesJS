@@ -132,7 +132,6 @@ export default class Accolades extends DiscordBasePlugin
 	}
 
 	async onDeployableDamaged(info) {
-		// TODO: Give players points if they destroy deployables
 		const { player, deployable, weapon } = info;
 
 		if (!player || !deployable.match(/(?:FOBRadio|Hab)_/i) || !weapon.match(/_Deployable_/i)) {
@@ -141,12 +140,9 @@ export default class Accolades extends DiscordBasePlugin
 
 		const steamId = player.steamID;
 
-		// I think string comps are fine here? If not, might want to use regex
-		if (deployable === "FOBRadio") {
-			// If this is a Radio
+		if (deployable.match(/(?:FOBRadio)/i)) {
 			this.applyPoints(steamId, this.options.radioPoints);
-		} else if (deployable === "Hab") {
-			// If this is a HAB
+		} else if (deployable.match(/(?:Hab)/i)) {
 			this.applyPoints(steamId, this.options.habPoints);
 		}
 	}
