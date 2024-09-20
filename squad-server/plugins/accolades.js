@@ -16,8 +16,8 @@ export default class Accolades extends DiscordBasePlugin
 			...DiscordBasePlugin.optionsSpecification,
 			database: {
 				required: true,
-				connector: 'sequelize',
-				description: "The sequelize connector to store player data.",
+				connector: "mysql",
+				description: "The mysql connector to store player data.",
 				default: "mysql"
 			},
 			channelID: {
@@ -71,8 +71,18 @@ export default class Accolades extends DiscordBasePlugin
 		this.models = {};
 		this.points = {};
 
-		/* Handle model creation */
-		this.createModel("Points", {
+		/* Bind event scopes */
+		this.onMessage = this.onMessage.bind(this);
+		this.onNewGame = this.onNewGame.bind(this);
+		this.onTeamKill = this.onTeamKill.bind(this);
+		this.onPlayerDied = this.onPlayerDied.bind(this);
+		this.onPlayerRevived = this.onPlayerRevived.bind(this);
+		this.onPlayerConnected = this.onPlayerConnected.bind(this);
+		this.onDeployableDamaged = this.onDeployableDamaged.bind(this);
+	}
+
+	async mount() {
+		this.createModel("points", {
 			id: {
 				type: DataTypes.STRING,
 				primaryKey: true
@@ -85,17 +95,6 @@ export default class Accolades extends DiscordBasePlugin
 			collate: "utf8mb4_unicode_ci"
 		});
 
-		/* Bind event scopes */
-		this.onMessage = this.onMessage.bind(this);
-		this.onNewGame = this.onNewGame.bind(this);
-		this.onTeamKill = this.onTeamKill.bind(this);
-		this.onPlayerDied = this.onPlayerDied.bind(this);
-		this.onPlayerRevived = this.onPlayerRevived.bind(this);
-		this.onPlayerConnected = this.onPlayerConnected.bind(this);
-		this.onDeployableDamaged = this.onDeployableDamaged.bind(this);
-	}
-
-	async mount() {
 		/* Discord event listeners */
 		this.options.discordClient.on("message", this.onMessage);
 
@@ -124,7 +123,7 @@ export default class Accolades extends DiscordBasePlugin
 	// #region Event Handlers
 
 	async onNewGame() {
-		for (const [ id, points ] in this.points) {
+		for (const [ id, points ] in Object.entries(this.points)) {
 			const newPoints = points + this.options.newGamePoints;
 
 			this.points[ id ] = Math.max(0, Math.min(newPoints, 999999));
@@ -186,6 +185,12 @@ export default class Accolades extends DiscordBasePlugin
 	}
 
 	async savePoints() {
-		// TODO: Handle saving the players points at the end of the game
+		for (const [ key, value ] of Object.entries(this.points)) {
+			this.models.accolades
+				.upsert({
+					id: key,
+					points: value
+				});
+		}
 	}
 }
