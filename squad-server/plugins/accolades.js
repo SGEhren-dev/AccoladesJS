@@ -1,7 +1,7 @@
 import { DataTypes } from "sequelize";
-import DiscordBasePlugin from "./discord-base-plugin";
+import BasePlugin from "./base-plugin.js";
 
-export default class Accolades extends DiscordBasePlugin
+export default class Accolades extends BasePlugin
 {
 	static get description() {
 		return "This is a SquadJS plugin that awards points and other configurable awards to people in your discord for various meritorious acts in their games";
@@ -13,18 +13,11 @@ export default class Accolades extends DiscordBasePlugin
 
 	static get optionsSpecification() {
 		return {
-			...DiscordBasePlugin.optionsSpecification,
 			database: {
 				required: true,
 				connector: "mysql",
 				description: "The mysql connector to store player data.",
 				default: "mysql"
-			},
-			channelID: {
-				required: true,
-				description: "The ID of the channel to listen for messages on.",
-				default: "",
-				example: "667741905228136459"
 			},
 			habPoints: {
 				required: true,
@@ -72,7 +65,6 @@ export default class Accolades extends DiscordBasePlugin
 		this.points = {};
 
 		/* Bind event scopes */
-		this.onMessage = this.onMessage.bind(this);
 		this.onNewGame = this.onNewGame.bind(this);
 		this.onTeamKill = this.onTeamKill.bind(this);
 		this.onPlayerDied = this.onPlayerDied.bind(this);
@@ -95,9 +87,6 @@ export default class Accolades extends DiscordBasePlugin
 			collate: "utf8mb4_unicode_ci"
 		});
 
-		/* Discord event listeners */
-		this.options.discordClient.on("message", this.onMessage);
-
 		/* Game event listeners */
 		this.server.on("NEW_GAME", this.onNewGame);
 		this.server.on("TEAMKILL", this.onTeamKill);
@@ -105,12 +94,12 @@ export default class Accolades extends DiscordBasePlugin
 		this.server.on("PLAYER_REVIVED", this.onPlayerRevived);
 		this.server.on("PLAYER_CONNECTED", this.onPlayerConnected);
 		this.server.on("DEPLOYABLE_DAMAGED", this.onDeployableDamaged);
+
+		await this.models.points.sync();
+		await this.loadUserData();
 	}
 
 	async unmount() {
-		/* Discord event listeners */
-		this.options.discordClient.removeEventListener("message", this.onMessage);
-	
 		/* Game event listeners */
 		this.server.removeEventListener("NEW_GAME", this.onNewGame);
 		this.server.removeEventListener("TEAMKILL", this.onTeamKill);
@@ -118,16 +107,21 @@ export default class Accolades extends DiscordBasePlugin
 		this.server.removeEventListener("PLAYER_REVIVED", this.onPlayerRevived);
 		this.server.removeEventListener("PLAYER_CONNECTED", this.onPlayerConnected);
 		this.server.removeEventListener("DEPLOYABLE_DAMAGED", this.onDeployableDamaged);
+		this.server.removeEventListener("PLAYER_DISCONNECTED", this.onPlayerDisconnected);
+
+		await this.savePoints();
 	}
 
 	// #region Event Handlers
 
 	async onNewGame() {
-		for (const [ id, points ] in Object.entries(this.points)) {
-			const newPoints = points + this.options.newGamePoints;
-
-			this.points[ id ] = Math.max(0, Math.min(newPoints, 999999));
+		for (const id in Object.keys(this.points)) {
+			this.applyPoints(id, this.options.newGamePoints);
 		}
+
+		console.log(this.points);
+
+		await this.savePoints();
 	}
 
 	async onDeployableDamaged(info) {
@@ -146,12 +140,15 @@ export default class Accolades extends DiscordBasePlugin
 		}
 	}
 
-	async onMessage(message) {
-		// TODO: Handle discord messages
-	}
 
 	async onPlayerDied(info) {
-		// TODO: Handle awarding points for player kills
+		const { attacker: { steamID } } = info;
+
+		if (!steamID) {
+			return;
+		}
+
+		this.applyPoints(steamID, this.options.killPoints);
 	}
 
 	async onTeamKill(info) {
@@ -159,7 +156,47 @@ export default class Accolades extends DiscordBasePlugin
 	}
 
 	async onPlayerConnected(info) {
-		// TODO: Initialize player points if the player does not exist
+		const { player } = info;
+
+		console.log(player);
+
+		if (!player) {
+			return;
+		}
+
+		const { steamID } = player;
+
+		const playerPoints = await this.models.points
+			.findOne({
+				where: { id: steamID }
+			});
+
+		if (!playerPoints) {
+			this.points[ steamID ] = 0;
+
+			return;
+		}
+
+		this.points[ steamID ] = playerPoints.points;
+	}
+
+	async onPlayerDisconnected(info) {
+		const { player } = info;
+
+		console.log(player);
+
+		if (!player) {
+			return;
+		}
+
+		const { steamID } = player;
+		const points = this.points[ steamID ];
+
+		await this.models.points
+			.upsert({
+				id: steamID,
+				points 
+			});
 	}
 
 	async onPlayerRevived(info) {
@@ -168,14 +205,19 @@ export default class Accolades extends DiscordBasePlugin
 
 	// #endregion
 
+	// #region Helpers
+
 	createModel(name, schema) {
-		this.models[ name ] = this.options.database.define(`Accolades_${ name }`, schema, {
+		this.models[ name ] = this.options.database.define(`accolades_${ name }`, schema, {
 			timestamps: false
 		});
 	}
 
-	loadUserData() {
-
+	async loadUserData() {
+		await this.models.points
+			.findAll(({ id, points }) => {
+				this.points[ id ] = points;
+			});
 	}
 
 	applyPoints(id, points) {
@@ -186,11 +228,13 @@ export default class Accolades extends DiscordBasePlugin
 
 	async savePoints() {
 		for (const [ key, value ] of Object.entries(this.points)) {
-			this.models.accolades
+			this.models.points
 				.upsert({
 					id: key,
 					points: value
 				});
 		}
 	}
+
+	// #endregion
 }
